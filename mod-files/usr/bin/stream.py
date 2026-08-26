@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # written by lxrd
+# stdlib-only (urllib.request instead of requests) so this runs on ChromeOS's
+# bundled Python without needing `pip install requests` or a venv at install
+# time. Functionality/behavior is unchanged from the original.
 
 import sys
 import struct
@@ -9,21 +12,26 @@ import os
 import zlib
 import time
 import argparse
-import requests
+import urllib.request
 
+
+def _open_range(url, start, length=None):
+    headers = {"Accept-Encoding": "identity"}
+    if length is not None:
+        headers["Range"] = f"bytes={start}-{start + length - 1}"
+    else:
+        headers["Range"] = f"bytes={start}-"
+    req = urllib.request.Request(url, headers=headers)
+    return urllib.request.urlopen(req)
 
 def range_get(url, start, length):
-    r = requests.get(url, headers={
-        "Range": f"bytes={start}-{start + length - 1}",
-        "Accept-Encoding": "identity"
-    }, stream=True)
-    r.raise_for_status()
-    return b"".join(r.iter_content(chunk_size=65536))
+    with _open_range(url, start, length) as r:
+        return r.read(length)
 
 def get_file_size(url):
-    r = requests.head(url, headers={"Accept-Encoding": "identity"})
-    r.raise_for_status()
-    return int(r.headers["content-length"])
+    req = urllib.request.Request(url, method="HEAD", headers={"Accept-Encoding": "identity"})
+    with urllib.request.urlopen(req) as r:
+        return int(r.headers["Content-Length"])
 
 def find_eocd64(url, file_size):
     tail = range_get(url, file_size - 512, 512)
@@ -109,17 +117,16 @@ def stream_stored(url, data_offset, partitions):
 
 def stream_deflate(url, data_offset, partitions):
     partitions = sorted(partitions, key=lambda x: x[0])
-    r = requests.get(url, headers={
-        "Range": f"bytes={data_offset}-",
-        "Accept-Encoding": "identity"
-    }, stream=True)
-    r.raise_for_status()
+    r = _open_range(url, data_offset)
     dec = zlib.decompressobj(wbits=-15)
     decompressed = http_bytes = 0
     handles = [(skip, length, open(outfile, 'wb'), label, 0)
                for skip, length, outfile, label in partitions]
     try:
-        for chunk in r.iter_content(chunk_size=2*1024*1024):
+        while True:
+            chunk = r.read(2*1024*1024)
+            if not chunk:
+                break
             http_bytes += len(chunk)
             out = dec.decompress(chunk)
             if not out:
@@ -146,7 +153,7 @@ def stream_deflate(url, data_offset, partitions):
     finally:
         for _, _, f, _, _ in handles:
             f.close()
-    r.close()
+        r.close()
 
 def fetch_partitions(url, data_offset, compress_type, partitions):
     parts = [(s * 512, n * 512, o, l) for s, n, o, l in partitions]
@@ -158,19 +165,19 @@ def fetch_partitions(url, data_offset, compress_type, partitions):
 def get_partition_table(url, data_offset, compress_type):
     if compress_type == 0:
         return range_get(url, data_offset, 10*1024*1024)
-    r = requests.get(url, headers={
-        "Range": f"bytes={data_offset}-",
-        "Accept-Encoding": "identity"
-    }, stream=True)
-    r.raise_for_status()
-    dec = zlib.decompressobj(wbits=-15)
-    buf = b""
-    for chunk in r.iter_content(chunk_size=1024*1024):
-        buf += dec.decompress(chunk)
-        if len(buf) >= 10*1024*1024:
-            break
-    r.close()
+    r = _open_range(url, data_offset)
+    try:
+        dec = zlib.decompressobj(wbits=-15)
+        buf = b""
+        while len(buf) < 10*1024*1024:
+            chunk = r.read(1024*1024)
+            if not chunk:
+                break
+            buf += dec.decompress(chunk)
+    finally:
+        r.close()
     return buf[:10*1024*1024]
+
 def tpm_version(kernel_path):
     try:
         out = subprocess.check_output(["futility", "show", kernel_path],

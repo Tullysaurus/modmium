@@ -92,7 +92,7 @@ dropModFiles() {
       mkdir -p $(dirname $realFile)
       cp $file $realFile
       chown 0:0 $realFile
-      chmod 777 $realFile
+      chmod $(modfile_mode "$realFile" "$file") $realFile
     fi
   done
   if [[ -d /usr/local/share/policy-test-tool ]]; then
@@ -172,11 +172,7 @@ installCros() {
   installRoot=${intdis_prefix}$(opposite_num $(get_booted_rootnum))
   echo -e "${G}Installing ChromeOS to disk...${N}"
   cd /usr/local
-  python -m venv .venv
-  source .venv/bin/activate
-  pip install requests &>/dev/null
   /usr/bin/stream.py --recovery-url "${recoveryUrl}" --kern-output "${installKern}" --root-output "${installRoot}" || fail "${R}Failed to install ChromeOS, refusing to change boot order, exiting...${N}"
-  rm -rf .venv
   # thanks lxrd for that python script btw
 
   echo -e "${G}Removing verity from ChromeOS...${N}" # hey, it's me, it's skiddity. skid me anything!
@@ -245,7 +241,7 @@ installCros() {
       mkdir -p $dir
       cp $file $oldFile
       chown 0:0 $oldFile
-      chmod 777 $oldFile
+      chmod $(modfile_mode "$(echo $file | sed 's/^.*mod-files//')" "$file") $oldFile
     fi
   done
   arch=$(file mnt/bin/bash | awk -F', ' '{print $2}')
@@ -299,8 +295,11 @@ installCros() {
   echo -e "Switching active kernel..."
   activekern=$(get_booted_kernnum)
   inactivekern=$(opposite_num "${activekern}")
-  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
+  # Promote the new kernel before demoting the old one, so a failure between
+  # the two calls can't leave both at low priority (unbootable).
   cgpt add -P 15 -T 6 -S 0 -i ${inactivekern} ${intdis}
+  sync
+  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
   sync
   echo -e "${G}Done! Would you like to reboot now? [Y/n]${N}"
   read -n1 -r
@@ -377,8 +376,11 @@ toggleBootPriority(){
     echo -e "${B}Keeping packages installed.${N}"
   fi
   echo -e "Switching active kernel..."
-  cgpt add $intdis -i $currentKern -P 1 -S 1 -T 0
+  # Promote the new kernel before demoting the current one, so a failure
+  # between the two calls can't leave both at low priority (unbootable).
   cgpt add $intdis -i $newKern -P 15 -S 0 -T 15
+  sync
+  cgpt add $intdis -i $currentKern -P 1 -S 1 -T 0
   echo -e "${G}Done! Switched to kernel on ${intdis_prefix}${newKern}${N}"
   sync
   sleep 3
