@@ -30,13 +30,21 @@ CONFIDENCE NOTE - please read before relying on this in the field
 - The protobuf parsing (PolicyFetchResponse -> PolicyData ->
   ChromeSettingsProto) is verified against the proto definitions already
   vendored in this directory and is not a guess.
-- The two ways this script tries to *locate* the raw blob (a per-user
-  session_manager daemon-store file, and a session_manager D-Bus call) are
-  based on documented ChromeOS platform internals, but were NOT exercised
-  against a real device while writing this (no ChromeOS hardware was
-  available). If neither works on a given ChromeOS version, this script
-  fails loudly with exactly what it tried, rather than silently producing
-  nothing, so it's obvious what needs adjusting.
+- Round 1 (on-disk daemon-store path + legacy RetrievePolicyForUser)
+  was tested on a real device and both failed: no file at the guessed
+  path, and RetrievePolicyForUser doesn't exist on this ChromeOS version
+  (org.freedesktop.DBus.Error.UnknownMethod). session_manager's D-Bus
+  introspection is disabled on this image, so the exact current method
+  couldn't be confirmed directly.
+- Round 2 (this version) tries RetrievePolicyEx instead - the documented
+  modern replacement, which takes a small serialized PolicyDescriptor
+  (account_type/account_id/domain) rather than a plain string. That
+  descriptor is hand-encoded as raw protobuf wire-format bytes (see
+  _build_policy_descriptor) since the message is small and stable enough
+  to do without vendoring login_manager's own proto. This has NOT been
+  confirmed against a real device yet either - if it also fails, the
+  error message will say which call failed and why, which is the next
+  thing to go on.
 - The existing chrome://policy export path in mosh-upol.sh (grabpolicy) is
   left completely untouched as a fallback if this doesn't work for you.
 """
@@ -118,17 +126,56 @@ def _parse_dbus_bytes(dbus_stdout: str):
         return None
 
 
-def find_via_dbus(email: str):
-    """Fall back to asking session_manager directly over D-Bus - the same
-    interface Chrome itself uses to fetch this data for chrome://policy."""
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
+
+
+def _build_policy_descriptor(email: str) -> bytes:
+    """Hand-encodes login_manager's small PolicyDescriptor proto
+    (account_type, account_id, domain) as raw protobuf wire-format bytes,
+    for the RetrievePolicyEx D-Bus call. This is done by hand rather than
+    via a generated _pb2 module because that proto isn't vendored in this
+    tool (it's a login_manager-internal message, not a cloud policy one) -
+    but the message is small and stable enough to encode directly:
+
+        message PolicyDescriptor {
+          optional AccountType account_type = 1;  // ACCOUNT_TYPE_USER = 1
+          optional string account_id = 2;
+          optional PolicyDomain domain = 3;       // POLICY_DOMAIN_CHROME = 0
+        }
+    """
+    ACCOUNT_TYPE_USER = 1
+    POLICY_DOMAIN_CHROME = 0
+    account_id = email.encode("utf-8")
+    out = bytearray()
+    out += bytes([0x08]) + _varint(ACCOUNT_TYPE_USER)          # field 1, varint
+    out += bytes([0x12]) + _varint(len(account_id)) + account_id  # field 2, length-delimited
+    out += bytes([0x18]) + _varint(POLICY_DOMAIN_CHROME)       # field 3, varint
+    return bytes(out)
+
+
+def _dbus_bytes_arg(data: bytes) -> str:
+    """Formats raw bytes as a dbus-send array:byte: CLI argument."""
+    return "array:byte:" + ",".join(f"0x{b:02x}" for b in data)
+
+
+def _call_dbus_method(method: str, args) -> bytes | None:
     try:
         result = subprocess.run(
             [
                 "dbus-send", "--system", "--print-reply", "--type=method_call",
                 "--dest=org.chromium.SessionManager",
                 "/org/chromium/SessionManager",
-                "org.chromium.SessionManagerInterface.RetrievePolicyForUser",
-                f"string:{email}",
+                f"org.chromium.SessionManagerInterface.{method}",
+                *args,
             ],
             capture_output=True, text=True, timeout=10,
         )
@@ -136,9 +183,22 @@ def find_via_dbus(email: str):
         logging.warning(f"dbus-send unavailable or timed out: {e}")
         return None
     if result.returncode != 0:
-        logging.warning(f"session_manager D-Bus call failed: {result.stderr.strip()}")
+        logging.warning(f"{method} D-Bus call failed: {result.stderr.strip()}")
         return None
-    raw = _parse_dbus_bytes(result.stdout)
+    return _parse_dbus_bytes(result.stdout)
+
+
+def find_via_dbus(email: str):
+    """Fall back to asking session_manager directly over D-Bus - the same
+    interface Chrome itself uses to fetch this data for chrome://policy.
+    Tries the modern RetrievePolicyEx method first (current ChromeOS), then
+    the older plain-string RetrievePolicyForUser (older ChromeOS) in case
+    this is running against an ancient image."""
+    descriptor = _build_policy_descriptor(email)
+    raw = _call_dbus_method("RetrievePolicyEx", [_dbus_bytes_arg(descriptor)])
+    if raw is None:
+        logging.info("RetrievePolicyEx unavailable, trying legacy RetrievePolicyForUser...")
+        raw = _call_dbus_method("RetrievePolicyForUser", [f"string:{email}"])
     if raw is None:
         return None
     return _try_parse(raw, email)
