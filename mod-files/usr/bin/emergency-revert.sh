@@ -141,18 +141,17 @@ installCros() {
   installRoot=${intdis_prefix}$(opposite_num $(get_booted_rootnum))
   echo -e "${G}Installing ChromeOS to disk...${N}"
   cd /usr/local
-  python -m venv .venv
-  source .venv/bin/activate
-  pip install requests &>/dev/null
   /usr/bin/stream.py --recovery-url "${recoveryUrl}" --kern-output "${installKern}" --root-output "${installRoot}" || fail "${R}Failed to install ChromeOS, refusing to change boot order, exiting...${N}"
-  rm -rf .venv
    echo -e "${G}Syncing filesystem (may take a while)...${N}"
   sync
   echo -e "${G}Done, reboot to return to factory ChromeOS!${N}"
   activekern=$(get_booted_kernnum)
   inactivekern=$(opposite_num "${activekern}")
-  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
+  # Promote the new kernel before demoting the old one, so a failure between
+  # the two calls can't leave both at low priority (unbootable).
   cgpt add -P 15 -T 6 -S 0 -i ${inactivekern} ${intdis}
+  sync
+  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
   sleep 1
   stty -echo
   [[ $factoryreset == 1 ]] || fail "Exiting..."
