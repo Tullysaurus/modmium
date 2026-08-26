@@ -151,8 +151,11 @@ installCros() {
   echo -e "${G}Done, reboot to return to factory ChromeOS!${N}"
   activekern=$(get_booted_kernnum)
   inactivekern=$(opposite_num "${activekern}")
-  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
+  # Promote the new kernel before demoting the old one, so a failure between
+  # the two calls can't leave both at low priority (unbootable).
   cgpt add -P 15 -T 6 -S 0 -i ${inactivekern} ${intdis}
+  sync
+  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
   sleep 1
   stty -echo
   [[ $factoryreset == 1 ]] || fail "Exiting..."
