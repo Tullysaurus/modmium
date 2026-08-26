@@ -138,9 +138,18 @@ updateModmium() {
 }
 
 installCros() {
+  # employ()'s own SIGINT trap (in the calling shell) doesn't map to
+  # anything meaningful here, so Ctrl+C normally does nothing during this
+  # setup/confirmation phase. Give it a real, working handler for as long
+  # as it's still safe to bail out - cleared again right before the actual
+  # disk write starts, reverting to whatever handling was already in
+  # place for that part (unchanged from before this fix).
+  trap 'stty echo; tput cnorm; fail "${R}Cancelled.${N}"' INT
   stop powerd &>/dev/null
   ldconfig
   stty echo
+  confirm_irreversible "This will reinstall ChromeOS and overwrite the inactive partition. This cannot be undone once it starts." \
+    || fail "${R}Exiting...${N}"
   echo -e "${D}Note: this script grabs the current kernver and signs the new version with it, so there's no issues with upgrading or downgrading.${N}"
   echo -ne "Version of ChromeOS you want to install: "
   read -rep "" VERSION
@@ -154,8 +163,7 @@ installCros() {
       || fail "${R}Exiting...${N}"
   fi
   [[ ( $MILESTONE -gt $VERSION ) && ( $MILESTONE -gt 140 ) ]] && echo -e "${Y}You may have to remove and sign back into your account(s) after downgrading. Continuing anyways...${N}"
-  confirm_irreversible "This will reinstall ChromeOS $VERSION and overwrite the inactive partition. This cannot be undone once it starts." \
-    || fail "${R}Exiting...${N}"
+  trap - INT
   askBranch
   askRepo
   getImageLink
