@@ -7,15 +7,18 @@ name: Sync forked branches
 # the expected outcome; a real conflict means someone touched the same
 # lines the fork overrides, which needs a human to resolve.
 #
-# NOTE: the `schedule` trigger only fires from a workflow file that exists
-# on the repository's default branch (stable). Until this file is merged
-# there (via nightly, per this repo's normal promotion flow), it can still
-# be run on demand from the Actions tab (workflow_dispatch) from whichever
-# branch it lives on.
+# NOTE: both the `push` and `schedule` triggers only fire from a workflow
+# file that already exists on the branch being pushed to / on the
+# repository's default branch (stable) respectively. Until this file is
+# merged there (via nightly, per this repo's normal promotion flow), it can
+# still be run on demand from the Actions tab (workflow_dispatch) from
+# whichever branch it lives on.
 
 on:
+  push:
+    branches: [stable, nightly]
   schedule:
-    - cron: "0 */6 * * *" # every 6 hours
+    - cron: "0 3 * * *" # daily safety net, in case a push-triggered run is ever missed
   workflow_dispatch: {}
 
 permissions:
