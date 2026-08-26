@@ -172,11 +172,7 @@ installCros() {
   installRoot=${intdis_prefix}$(opposite_num $(get_booted_rootnum))
   echo -e "${G}Installing ChromeOS to disk...${N}"
   cd /usr/local
-  python -m venv .venv
-  source .venv/bin/activate
-  pip install requests &>/dev/null
   /usr/bin/stream.py --recovery-url "${recoveryUrl}" --kern-output "${installKern}" --root-output "${installRoot}" || fail "${R}Failed to install ChromeOS, refusing to change boot order, exiting...${N}"
-  rm -rf .venv
   # thanks lxrd for that python script btw
 
   echo -e "${G}Removing verity from ChromeOS...${N}" # hey, it's me, it's skiddity. skid me anything!
