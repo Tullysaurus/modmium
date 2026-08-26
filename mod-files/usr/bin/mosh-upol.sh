@@ -214,6 +214,22 @@ grabpolicy(){
   full_menu
 }
 
+autopolicy(){
+  echo -e "${Y}This tries to read the target account's policy directly, without needing chrome://policy access. It's newer and less tested than the Downloads method - if it fails, use 'Grab policy.json from Downloads' instead.${N}"
+  echo -ne "${G}Enter target email: ${N}"
+  read -rep "" email
+  [[ -z "$email" ]] && { echo -e "${R}No email entered, exiting...${N}"; sleep 2; menu_reset; full_menu; return; }
+  ensure_deps protobuf-python
+  run_with_feedback "Extracting policy for $email..." \
+    python3 /usr/share/.policy-test-tool/extract_user_policy.py --email "$email" --output "$POLICYFILE" \
+    || { echo -e "${R}Automatic extraction failed - use 'Grab policy.json from Downloads' instead.${N}"; sleep 3; menu_reset; full_menu; return; }
+  sync
+  echo -e "Refreshing menu..."
+  sleep 0.5
+  menu_reset
+  full_menu
+}
+
 # -- MAIN SCRIPT --
 tput civis # :whale:
 
@@ -231,9 +247,9 @@ menu_reset() {
     functions=("install" "grabpolicy" "quit")
   fi
   if [[ ! -f $POLICYFILE ]]; then
-    options=("Grab policy.json from Downloads" "Exit")
-    functions=("grabpolicy" "quit")
-    menuText="\nMOSH user policy editor\n\n${R}PLEASE LOGIN TO YOUR ACCOUNT, GO TO ${N}chrome://policy${R} AND SAVE IT TO THE ROOT OF YOUR DOWNLOADS FOLDER.\n${N}After that, run 'Grab policy.json from Downloads', then remove the account (or powerwash)."
+    options=("Try automatic extraction (no chrome://policy needed)" "Grab policy.json from Downloads" "Exit")
+    functions=("autopolicy" "grabpolicy" "quit")
+    menuText="\nMOSH user policy editor\n\n${Y}Try automatic extraction first if you can't access chrome://policy - it reads the target account's policy directly.${N}\nOtherwise: ${R}PLEASE LOGIN TO YOUR ACCOUNT, GO TO ${N}chrome://policy${R} AND SAVE IT TO THE ROOT OF YOUR DOWNLOADS FOLDER.\n${N}After that, run 'Grab policy.json from Downloads', then remove the account (or powerwash)."
   fi
   num_options=${#options[@]}
 }
