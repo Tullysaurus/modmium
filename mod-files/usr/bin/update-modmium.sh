@@ -57,21 +57,24 @@ getImageLink(){
 }
 
 askBranch(){
+  # -- FORK BUILD: this pulls updates from Tullysaurus/modmium instead of --
+  # -- crosmium/modmium. "stable"/"nightly" here map to this fork's        --
+  # -- forked-stable/forked-nightly branches, not the real ones.           --
   branchfile="$(cat /.branch)"
-  [[ $branchfile ]] || branchfile="stable"
+  [[ $branchfile ]] || branchfile="forked-stable"
   echo -e "[If you don't know what this means, just press enter]"
-  if [[ $branchfile == "stable" ]]; then
-    echo -ne "Branch of Modmium to install (${B}stable${N}, nightly): "
+  if [[ $branchfile == "forked-stable" ]]; then
+    echo -ne "Branch of Modmium to install (${B}stable${N}, nightly) [FORK BUILD]: "
   else
-    echo -ne "Branch of Modmium to install (stable, ${B}nightly${N}): "
+    echo -ne "Branch of Modmium to install (stable, ${B}nightly${N}) [FORK BUILD]: "
   fi
   read -rep "" branchreq
   case $branchreq in
     nightly)
-    branch="nightly"
+    branch="forked-nightly"
     ;;
   stable)
-    branch="stable"
+    branch="forked-stable"
       ;;
   *)
     branch="${branchfile}"
@@ -108,9 +111,9 @@ updateModmium() {
   [[ -d modmium ]] && rm -rf modmium
   if [[ -d /root/.ssh ]]; then
     [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
-    git clone --depth 1 -b $branch --single-branch git@github.com:crosmium/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
+    git clone --depth 1 -b $branch --single-branch git@github.com:Tullysaurus/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
   else
-    git clone --depth 1 -b $branch --single-branch https://github.com/crosmium/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
+    git clone --depth 1 -b $branch --single-branch https://github.com/Tullysaurus/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
   fi
   echo -e "${G}Successfully cloned repository!${N} Dropping new files..."
   dropModFiles || fail "${R}Failed to drop updated files, please make an issue report on https://github.com/crosmium/modmium with details of changes you made, if any...${N}"
@@ -253,9 +256,9 @@ installCros() {
   [[ -d modmium ]] && rm -rf modmium
   if [[ -d /root/.ssh ]]; then
     [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
-    git clone --depth 1 -b $branch --single-branch git@github.com:crosmium/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
+    git clone --depth 1 -b $branch --single-branch git@github.com:Tullysaurus/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
   else
-    git clone --depth 1 -b $branch --single-branch https://github.com/crosmium/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
+    git clone --depth 1 -b $branch --single-branch https://github.com/Tullysaurus/modmium.git || fail "${R}Failed to clone repository, exiting...${N}"
   fi
   echo -e "${G}Successfully cloned repository!${N} Dropping new files..."
 

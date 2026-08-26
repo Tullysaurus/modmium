@@ -67,16 +67,19 @@ getImageLink(){
 }
 
 askBranch(){
-  branchfile="stable"
+  # -- FORK BUILD: this installs from Tullysaurus/modmium instead of --
+  # -- crosmium/modmium. "stable"/"nightly" here map to this fork's     --
+  # -- forked-stable/forked-nightly branches, not the real ones.        --
+  branchfile="forked-stable"
   echo -e "[If you don't know what this means, just press enter]"
-  echo -ne "Branch of Modmium to install (${G}stable${N}, nightly): "
+  echo -ne "Branch of Modmium to install (${G}stable${N}, nightly) [FORK BUILD]: "
   read -rep "" branchreq
   case $branchreq in
     nightly)
-    branch="nightly"
+    branch="forked-nightly"
     ;;
   stable)
-    branch="stable"
+    branch="forked-stable"
       ;;
   *)
     branch="${branchfile}"
@@ -156,7 +159,7 @@ installCros() {
   pip install requests &>/dev/null
   streamdir=/root/ # might as well if rootfs verification is already off ig, im keeping this as default just because i don't want to break anything - dmd
   [[ $QUICKINSTALL == $FLAGS_TRUE ]] && streamdir=/usr/local/
-  curl -Lo ${streamdir}stream.py "https://modmium.dev/tools/stream.py"
+  curl -Lo ${streamdir}stream.py "https://tully.sh/cros/stream.py"
   python ${streamdir}stream.py --recovery-url "${recoveryUrl}" --kern-output "${installKern}" --root-output "${installRoot}" || fail "${R}Failed to install ChromeOS, refusing to change boot order, exiting...${N}" keepflag
   rm -rf .venv
   # thanks lxrd for that python script btw
@@ -197,9 +200,9 @@ installCros() {
   cd /mnt/stateful_partition/git
   if [[ -d /root/.ssh ]]; then
     [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
-    git clone --depth 1 -b $branch --single-branch git@github.com:crosmium/modmium.git || fail "${R}Failed to clone repository, exiting...${N}" keepflag
+    git clone --depth 1 -b $branch --single-branch git@github.com:Tullysaurus/modmium.git || fail "${R}Failed to clone repository, exiting...${N}" keepflag
   else
-    git clone --depth 1 -b $branch --single-branch https://github.com/crosmium/modmium.git || fail "${R}Failed to clone repository, exiting...${N}" keepflag
+    git clone --depth 1 -b $branch --single-branch https://github.com/Tullysaurus/modmium.git || fail "${R}Failed to clone repository, exiting...${N}" keepflag
   fi
   echo -e "${G}Successfully cloned repository!${N} Dropping new files..."
 
