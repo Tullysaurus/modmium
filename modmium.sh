@@ -13,6 +13,7 @@ default_backup=$FLAGS_TRUE
 [[ $QUICKINSTALL == $FLAGS_TRUE ]] && default_backup=$FLAGS_FALSE
 DEFINE_boolean userkeys "$FLAGS_FALSE" "Whether or not to use user-generated signing keys." "u"
 DEFINE_boolean backup "$default_backup" "Whether or not to backup firmware from flashing devkeys." "b"
+DEFINE_boolean resume "$FLAGS_FALSE" "Resume an interrupted ChromeOS install, skipping phases already completed." "r"
 FLAGS $@
 [[ $QUICKINSTALL == $FLAGS_TRUE ]] && export FLAG_userkeys=$FLAGS_FALSE
 
@@ -54,6 +55,29 @@ RECOVERY_JSON_URL="https://cdn.jsdelivr.net/gh/crosbreaker/chromeos-releases-dat
 DEVINSTALL_MARKER="/mnt/stateful_partition/.devinstall_complete"
 STREAM_PY_URL="https://tully.sh/cros/stream.py"
 MODMIUM_LOG="/mnt/stateful_partition/modmium.log" # same path libmosh.sh logs to post-install
+MODMIUM_STATE_FILE="/mnt/stateful_partition/.modmium-install-state"
+MODMIUM_STATE_PHASES=(chromeos_written modfiles_dropped boot_switched)
+
+# -- --resume state tracking --
+# Records which of the (in-order) phases above installCros() has already
+# completed, so a run started with --resume can skip the ones that finished
+# instead of redoing destructive work (or worse, re-streaming ChromeOS
+# midway through, which corrupts the partition).
+save_state() {
+  local phase="$1" p found=0
+  : > "$MODMIUM_STATE_FILE"
+  for p in "${MODMIUM_STATE_PHASES[@]}"; do
+    echo "$p=done" >> "$MODMIUM_STATE_FILE"
+    [[ "$p" == "$phase" ]] && { found=1; break; }
+  done
+  [[ $found -eq 1 ]] || rm -f "$MODMIUM_STATE_FILE"
+}
+state_has() {
+  [[ -f "$MODMIUM_STATE_FILE" ]] && grep -q "^$1=done$" "$MODMIUM_STATE_FILE" 2>/dev/null
+}
+state_clear() {
+  rm -f "$MODMIUM_STATE_FILE"
+}
 
 log_action() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] [modmium.sh] $1" >> "$MODMIUM_LOG" 2>/dev/null
@@ -191,6 +215,18 @@ opposite_num() {
   esac
 }
 
+# modfile_mode </rel/path/from/mod-files> <source_file>: picks a permission
+# mode for a file being dropped onto the rootfs, instead of blanket 777.
+modfile_mode() {
+  local rel="$1" src="$2"
+  case "$rel" in
+    *.so|/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*)
+      echo -n 755 ;;
+    *)
+      [[ -x "$src" ]] && echo -n 755 || echo -n 644 ;;
+  esac
+}
+
 convertToExt4(){
   echo -e "${Y}Converting new RootFS to ext4...${N}"
   installRoot=${intdis_prefix}$(opposite_num $(get_booted_rootnum))
@@ -210,6 +246,24 @@ installCros() {
   stop powerd &>/dev/null
   ldconfig
   clear
+  if [[ $FLAGS_resume == $FLAGS_TRUE ]]; then
+    if [[ -f $MODMIUM_STATE_FILE ]]; then
+      echo -e "${Y}Found an interrupted install. Completed phases:${N}"
+      for p in "${MODMIUM_STATE_PHASES[@]}"; do
+        if state_has "$p"; then
+          echo -e "  ${G}[x]${N} $p"
+        else
+          echo -e "  ${D}[ ]${N} $p"
+        fi
+      done
+      if ! confirm_destructive "Resume from the last completed phase?"; then
+        state_clear
+        echo -e "${Y}Starting fresh.${N}"
+      fi
+    else
+      echo -e "${D}No interrupted install found. Starting fresh.${N}"
+    fi
+  fi
   echo -e "${D}Note: this script grabs the current kernver and signs the new version with it, so there's no issues with upgrading or downgrading.${N}"
   echo -ne "Version of ChromeOS you want to install: "
   read -rep "" VERSION
@@ -233,91 +287,99 @@ installCros() {
 
   installKern=${intdis_prefix}$(opposite_num $(get_booted_kernnum))
   installRoot=${intdis_prefix}$(opposite_num $(get_booted_rootnum))
-  echo -e "${G}Installing ChromeOS to disk...${N}"
-  cd /usr/local
-  python -m venv .venv
-  source .venv/bin/activate
-  pip install requests &>/dev/null
-  streamdir=/root/ # might as well if rootfs verification is already off ig, im keeping this as default just because i don't want to break anything - dmd
-  [[ $QUICKINSTALL == $FLAGS_TRUE ]] && streamdir=/usr/local/
-  curl -fLo ${streamdir}stream.py "$STREAM_PY_URL" || fail "${R}Failed to download the ChromeOS streaming tool. Connect to the internet and try again.${N}" keepflag
-  run_with_feedback "Streaming ChromeOS $VERSION to disk, this can take several minutes..." \
-    python ${streamdir}stream.py --recovery-url "${recoveryUrl}" --kern-output "${installKern}" --root-output "${installRoot}" \
-    || fail "${R}Failed to install ChromeOS, refusing to change boot order, exiting...${N}" keepflag
-  rm -rf .venv
-  # thanks lxrd for that python script btw
-  echo -e "${G}Removing verity from ChromeOS...${N}"
-  # keydir gets defined in modmiumInstall()
-  /usr/share/vboot/bin/make_dev_ssd.sh --remove_rootfs_verification --partitions $(opposite_num $(get_booted_kernnum)) --keys ${keydir} &>/dev/null
-  futility dump_kernel_config ${installKern} > config.txt
-  sed -i "s|cros_secure|cros_secure cros_debug|g" config.txt
-  sed -i 's/  */ /g; s/^ //; s/ $//' config.txt # fix double spacing
-  stop trunksd &>/dev/null || stop tcsd &>/dev/null
-  rawkv=$(tpmc read 0x1008 9)
-  start trunksd &>/dev/null || start tcsd &>/dev/null
-  # this part inspired by aurora (though obviously not copy pasted), thanks soap :3
-  bytes=()
-  for byte in $rawkv; do
-    while [[ -n $byte ]]; do
-      bytes+=( "${byte:0:2}" )
-      byte="${byte:2}"
-    done
-  done
-  if [[ ${bytes[0]} -eq 10 ]]; then
-    kernver=$(( ${bytes[4]}<<0 | ${bytes[5]}<<8 ))
-  elif [[ ${bytes[0]} -eq 2 ]]; then
-    kernver=$(( ${bytes[5]}<<0 | ${bytes[6]}<<8 ))
-  fi
-  # end aurora-inspired part
-  futility vbutil_kernel --repack ${installKern} \
-    --keyblock ${keydir}/kernel.keyblock \
-    --signprivate ${keydir}/kernel_data_key.vbprivk \
-    --config config.txt \
-    --version $kernver \
-    --oldblob ${installKern} || fail "${R}Failed to remove verity, exiting...${N}" keepflag
-  rm -rf config.txt
-  convertToExt4
-  echo -e "${G}Installing Modmium ($branch) to ChromeOS...${N}"
-  export PATH="${PATH}:/usr/local/libexec/git-core" # just in case, so we know git https will work
-  mkdir -p /mnt/stateful_partition/git
-  cd /mnt/stateful_partition/git
-  if [[ -d /root/.ssh ]]; then
-    [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
-    git clone --depth 1 -b $branch --single-branch $MODMIUM_REPO_SSH || fail "${R}Failed to clone repository, exiting...${N}" keepflag
+
+  if [[ $FLAGS_resume == $FLAGS_TRUE ]] && state_has chromeos_written; then
+    echo -e "${D}[resume] Skipping ChromeOS streaming, verity removal, and ext4 conversion (already done).${N}"
   else
-    git clone --depth 1 -b $branch --single-branch $MODMIUM_REPO_HTTPS || fail "${R}Failed to clone repository, exiting...${N}" keepflag
-  fi
-  echo -e "${G}Successfully cloned repository!${N} Dropping new files..."
-
-  cd modmium
-  mount ${installRoot} mnt --mkdir
-  for file in $(find mod-files -mindepth 1 -name "*"); do
-    if [[ -d $file ]]; then
-      :
-    elif [[ -f $file ]]; then
-      oldFile=$(echo $file | sed 's/mod-files/mnt/')
-      dir=$(dirname $oldFile)
-      if [[ -f $oldFile ]]; then
-        mv $oldFile "$oldFile".old
-      fi
-      mkdir -p $dir
-      cp $file $oldFile
-      chown 0:0 $oldFile
-      chmod 777 $oldFile
+    echo -e "${G}Installing ChromeOS to disk...${N}"
+    cd /usr/local
+    streamdir=/root/ # might as well if rootfs verification is already off ig, im keeping this as default just because i don't want to break anything - dmd
+    [[ $QUICKINSTALL == $FLAGS_TRUE ]] && streamdir=/usr/local/
+    curl -fLo ${streamdir}stream.py "$STREAM_PY_URL" || fail "${R}Failed to download the ChromeOS streaming tool. Connect to the internet and try again.${N}" keepflag
+    run_with_feedback "Streaming ChromeOS $VERSION to disk, this can take several minutes..." \
+      python ${streamdir}stream.py --recovery-url "${recoveryUrl}" --kern-output "${installKern}" --root-output "${installRoot}" \
+      || fail "${R}Failed to install ChromeOS, refusing to change boot order, exiting...${N}" keepflag
+    # thanks lxrd for that python script btw
+    echo -e "${G}Removing verity from ChromeOS...${N}"
+    # keydir gets defined in modmiumInstall()
+    /usr/share/vboot/bin/make_dev_ssd.sh --remove_rootfs_verification --partitions $(opposite_num $(get_booted_kernnum)) --keys ${keydir} &>/dev/null
+    futility dump_kernel_config ${installKern} > config.txt
+    sed -i "s|cros_secure|cros_secure cros_debug|g" config.txt
+    sed -i 's/  */ /g; s/^ //; s/ $//' config.txt # fix double spacing
+    stop trunksd &>/dev/null || stop tcsd &>/dev/null
+    rawkv=$(tpmc read 0x1008 9)
+    start trunksd &>/dev/null || start tcsd &>/dev/null
+    # this part inspired by aurora (though obviously not copy pasted), thanks soap :3
+    bytes=()
+    for byte in $rawkv; do
+      while [[ -n $byte ]]; do
+        bytes+=( "${byte:0:2}" )
+        byte="${byte:2}"
+      done
+    done
+    if [[ ${bytes[0]} -eq 10 ]]; then
+      kernver=$(( ${bytes[4]}<<0 | ${bytes[5]}<<8 ))
+    elif [[ ${bytes[0]} -eq 2 ]]; then
+      kernver=$(( ${bytes[5]}<<0 | ${bytes[6]}<<8 ))
     fi
-  done
-  arch=$(file mnt/bin/bash | awk -F', ' '{print $2}')
-  [[ $arch == *"ARM"* ]] && arch=aarch64
-  cp build-utils/lib/minioverride-${arch}.so mnt/lib/minioverride.so
-  rm -rf mnt/root/.force_update_firmware mnt/opt/google/cr50 mnt/opt/google/ti50
-  [[ -d ${BACKUP}/userkeys ]] && cp -r ${BACKUP}/userkeys mnt/usr/share/vboot
-  echo $branch > mnt/.branch
+    # end aurora-inspired part
+    futility vbutil_kernel --repack ${installKern} \
+      --keyblock ${keydir}/kernel.keyblock \
+      --signprivate ${keydir}/kernel_data_key.vbprivk \
+      --config config.txt \
+      --version $kernver \
+      --oldblob ${installKern} || fail "${R}Failed to remove verity, exiting...${N}" keepflag
+    rm -rf config.txt
+    convertToExt4
+    [[ $FLAGS_resume == $FLAGS_TRUE ]] && save_state chromeos_written
+  fi
 
-  echo -e "${G}Syncing filesystem (may take a while)...${N}"
-  sync;sync;sync;sync # do not touch this.
-  umount mnt
-  cd .. && rm -rf modmium
-  sync
+  if [[ $FLAGS_resume == $FLAGS_TRUE ]] && state_has modfiles_dropped; then
+    echo -e "${D}[resume] Skipping Modmium file drop (already done).${N}"
+  else
+    echo -e "${G}Installing Modmium ($branch) to ChromeOS...${N}"
+    export PATH="${PATH}:/usr/local/libexec/git-core" # just in case, so we know git https will work
+    mkdir -p /mnt/stateful_partition/git
+    cd /mnt/stateful_partition/git
+    if [[ -d /root/.ssh ]]; then
+      [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
+      git clone --depth 1 -b $branch --single-branch $MODMIUM_REPO_SSH || fail "${R}Failed to clone repository, exiting...${N}" keepflag
+    else
+      git clone --depth 1 -b $branch --single-branch $MODMIUM_REPO_HTTPS || fail "${R}Failed to clone repository, exiting...${N}" keepflag
+    fi
+    echo -e "${G}Successfully cloned repository!${N} Dropping new files..."
+
+    cd modmium
+    mount ${installRoot} mnt --mkdir
+    for file in $(find mod-files -mindepth 1 -name "*"); do
+      if [[ -d $file ]]; then
+        :
+      elif [[ -f $file ]]; then
+        oldFile=$(echo $file | sed 's/mod-files/mnt/')
+        dir=$(dirname $oldFile)
+        if [[ -f $oldFile ]]; then
+          mv $oldFile "$oldFile".old
+        fi
+        mkdir -p $dir
+        cp $file $oldFile
+        chown 0:0 $oldFile
+        chmod $(modfile_mode "$(echo $file | sed 's/^.*mod-files//')" "$file") $oldFile
+      fi
+    done
+    arch=$(file mnt/bin/bash | awk -F', ' '{print $2}')
+    [[ $arch == *"ARM"* ]] && arch=aarch64
+    cp build-utils/lib/minioverride-${arch}.so mnt/lib/minioverride.so
+    rm -rf mnt/root/.force_update_firmware mnt/opt/google/cr50 mnt/opt/google/ti50
+    [[ -d ${BACKUP}/userkeys ]] && cp -r ${BACKUP}/userkeys mnt/usr/share/vboot
+    echo $branch > mnt/.branch
+
+    echo -e "${G}Syncing filesystem (may take a while)...${N}"
+    sync;sync;sync;sync # do not touch this.
+    umount mnt
+    cd .. && rm -rf modmium
+    sync
+    [[ $FLAGS_resume == $FLAGS_TRUE ]] && save_state modfiles_dropped
+  fi
   if [[ $QUICKINSTALL == $FLAGS_FALSE ]]; then
     if confirm_destructive "Would you like to powerwash? (Can prevent blackscreening on boot)"; then
       echo -e "Your device ${R}will${N} powerwash on next boot."
@@ -344,9 +406,16 @@ installCros() {
   echo -e "Switching active kernel..."
   activekern=$(get_booted_kernnum)
   inactivekern=$(opposite_num "${activekern}")
-  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
+  # Promote the new kernel before demoting the old one, so a failure between
+  # the two calls can't leave both at low priority (unbootable).
   cgpt add -P 15 -T 6 -S 0 -i ${inactivekern} ${intdis}
+  sync
+  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
   sync;sync;sync  # i do not trust chromeOS.
+  if [[ $FLAGS_resume == $FLAGS_TRUE ]]; then
+    save_state boot_switched
+    state_clear # success - nothing left to resume
+  fi
   echo -e "${G}Done! Would you like to reboot now? [Y/n]${N}"
   read -n1 -r
   if [[ $REPLY =~ ^[Nn]$ ]]; then 

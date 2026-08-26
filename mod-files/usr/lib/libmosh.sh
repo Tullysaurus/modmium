@@ -130,6 +130,20 @@ opposite_num() {
   esac
 }
 
+# modfile_mode </rel/path/from/mod-files> <source_file>: picks a permission
+# mode for a file being dropped onto the rootfs, instead of blanket 777.
+#   .so files, and anything under bin/sbin/usr/bin/usr/sbin -> 755
+#   everything else -> 644, unless the source file is itself executable
+modfile_mode() {
+  local rel="$1" src="$2"
+  case "$rel" in
+    *.so|/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*)
+      echo -n 755 ;;
+    *)
+      [[ -x "$src" ]] && echo -n 755 || echo -n 644 ;;
+  esac
+}
+
 convertToExt4() {
   echo -e "${Y}Converting new RootFS to ext4...${N}"
   installRoot=${intdis_prefix}$(opposite_num $(get_booted_rootnum))

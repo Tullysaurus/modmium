@@ -43,6 +43,33 @@ setup() {
   [[ "$(opposite_num "")" == "skid" ]]
 }
 
+# -- modfile_mode --
+
+@test "modfile_mode gives 755 to anything under a bin/sbin dir" {
+  [[ "$(modfile_mode "/usr/bin/foo.sh" "$BATS_TEST_TMPDIR/nonexistent")" == "755" ]]
+  [[ "$(modfile_mode "/usr/sbin/foo" "$BATS_TEST_TMPDIR/nonexistent")" == "755" ]]
+  [[ "$(modfile_mode "/bin/foo" "$BATS_TEST_TMPDIR/nonexistent")" == "755" ]]
+  [[ "$(modfile_mode "/sbin/foo" "$BATS_TEST_TMPDIR/nonexistent")" == "755" ]]
+}
+
+@test "modfile_mode gives 755 to .so files regardless of location" {
+  [[ "$(modfile_mode "/usr/lib/foo.so" "$BATS_TEST_TMPDIR/nonexistent")" == "755" ]]
+}
+
+@test "modfile_mode gives 644 to a non-executable file outside bin/sbin" {
+  local src="$BATS_TEST_TMPDIR/data.json"
+  : > "$src"
+  chmod 644 "$src"
+  [[ "$(modfile_mode "/usr/share/data.json" "$src")" == "644" ]]
+}
+
+@test "modfile_mode preserves the executable bit outside bin/sbin" {
+  local src="$BATS_TEST_TMPDIR/libmosh.sh"
+  : > "$src"
+  chmod 755 "$src"
+  [[ "$(modfile_mode "/usr/lib/libmosh.sh" "$src")" == "755" ]]
+}
+
 # -- format_part_number --
 
 @test "format_part_number adds a 'p' separator only when the disk name ends in a digit" {
