@@ -188,6 +188,18 @@ opposite_num() {
   esac
 }
 
+# modfile_mode </rel/path/from/mod-files> <source_file>: picks a permission
+# mode for a file being dropped onto the rootfs, instead of blanket 777.
+modfile_mode() {
+  local rel="$1" src="$2"
+  case "$rel" in
+    *.so|/bin/*|/sbin/*|/usr/bin/*|/usr/sbin/*)
+      echo -n 755 ;;
+    *)
+      [[ -x "$src" ]] && echo -n 755 || echo -n 644 ;;
+  esac
+}
+
 convertToExt4(){
   echo -e "${Y}Converting new RootFS to ext4...${N}"
   installRoot=${intdis_prefix}$(opposite_num $(get_booted_rootnum))
@@ -300,7 +312,7 @@ installCros() {
       mkdir -p $dir
       cp $file $oldFile
       chown 0:0 $oldFile
-      chmod 777 $oldFile
+      chmod $(modfile_mode "$(echo $file | sed 's/^.*mod-files//')" "$file") $oldFile
     fi
   done
   arch=$(file mnt/bin/bash | awk -F', ' '{print $2}')
@@ -341,8 +353,11 @@ installCros() {
   echo -e "Switching active kernel..."
   activekern=$(get_booted_kernnum)
   inactivekern=$(opposite_num "${activekern}")
-  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
+  # Promote the new kernel before demoting the old one, so a failure between
+  # the two calls can't leave both at low priority (unbootable).
   cgpt add -P 15 -T 6 -S 0 -i ${inactivekern} ${intdis}
+  sync
+  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
   sync;sync;sync  # i do not trust chromeOS.
   echo -e "${G}Done! Would you like to reboot now? [Y/n]${N}"
   read -n1 -r

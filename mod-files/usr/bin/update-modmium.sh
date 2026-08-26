@@ -92,7 +92,7 @@ dropModFiles() {
       mkdir -p $(dirname $realFile)
       cp $file $realFile
       chown 0:0 $realFile
-      chmod 777 $realFile
+      chmod $(modfile_mode "$realFile" "$file") $realFile
     fi
   done
   if [[ -d /usr/local/share/policy-test-tool ]]; then
@@ -245,7 +245,7 @@ installCros() {
       mkdir -p $dir
       cp $file $oldFile
       chown 0:0 $oldFile
-      chmod 777 $oldFile
+      chmod $(modfile_mode "$(echo $file | sed 's/^.*mod-files//')" "$file") $oldFile
     fi
   done
   arch=$(file mnt/bin/bash | awk -F', ' '{print $2}')
@@ -299,8 +299,11 @@ installCros() {
   echo -e "Switching active kernel..."
   activekern=$(get_booted_kernnum)
   inactivekern=$(opposite_num "${activekern}")
-  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
+  # Promote the new kernel before demoting the old one, so a failure between
+  # the two calls can't leave both at low priority (unbootable).
   cgpt add -P 15 -T 6 -S 0 -i ${inactivekern} ${intdis}
+  sync
+  cgpt add -P 1 -T 0 -S 1 -i ${activekern} ${intdis}
   sync
   echo -e "${G}Done! Would you like to reboot now? [Y/n]${N}"
   read -n1 -r
@@ -377,8 +380,11 @@ toggleBootPriority(){
     echo -e "${B}Keeping packages installed.${N}"
   fi
   echo -e "Switching active kernel..."
-  cgpt add $intdis -i $currentKern -P 1 -S 1 -T 0
+  # Promote the new kernel before demoting the current one, so a failure
+  # between the two calls can't leave both at low priority (unbootable).
   cgpt add $intdis -i $newKern -P 15 -S 0 -T 15
+  sync
+  cgpt add $intdis -i $currentKern -P 1 -S 1 -T 0
   echo -e "${G}Done! Switched to kernel on ${intdis_prefix}${newKern}${N}"
   sync
   sleep 3
