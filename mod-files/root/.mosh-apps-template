@@ -1,5 +1,6 @@
 # You can edit and add whatever you want to this list [ ONLY 9 APPS MAX, DO NOT ADD MORE THAN 9 ]
 # FORMAT: 'COMMAND | NAME'
 
+/usr/bin/opencode-app.sh | OpenCode
 vi /usr/local/config/apps.conf | Edit apps.conf
 exit 0 | Go Back
