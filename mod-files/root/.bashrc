@@ -19,6 +19,19 @@ case ":$PATH:" in
   *) export PATH="$gitHelpers:$PATH" ;;
 esac
 
+# /tmp is noexec here, which breaks installers that unpack and run helper
+# binaries or shared objects from a temp dir. Stateful allows exec.
+mkdir -p /usr/local/tmp 2>/dev/null
+export TMPDIR=/usr/local/tmp
+
+# opencode installs to ~/.opencode/bin (kept on stateful via a symlink).
+if [[ -d $HOME/.opencode/bin ]]; then
+  case ":$PATH:" in
+    *":$HOME/.opencode/bin:"*) ;;
+    *) export PATH="$HOME/.opencode/bin:$PATH" ;;
+  esac
+fi
+
 
 if [[ -d /usr/local/nix/store ]]; then
   if ! mountpoint -q /nix; then
