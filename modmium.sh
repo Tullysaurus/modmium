@@ -195,6 +195,13 @@ askBranch(){
   echo # weird UI glitch if this isn't here, idk man
 }
 
+# A /root/.ssh directory doesn't mean git SSH actually works - people who
+# have one without a usable key were getting a failed clone. Check for a
+# real key instead (upstream fix, same check as update-modmium.sh).
+has_ssh_key() {
+  [[ -f /root/.ssh/id_rsa || -f /root/.ssh/id_ed25519 || -f /root/.ssh/id_ecdsa || -f /root/.ssh/id_dsa ]]
+}
+
 get_booted_kernnum() {
   if (( $(cgpt show -n "$intdis" -i 2 -P) > $(cgpt show -n "$intdis" -i 4 -P) )); then
     echo -n 2
@@ -341,7 +348,7 @@ installCros() {
     export PATH="${PATH}:/usr/local/libexec/git-core" # just in case, so we know git https will work
     mkdir -p /mnt/stateful_partition/git
     cd /mnt/stateful_partition/git
-    if [[ -d /root/.ssh ]]; then
+    if has_ssh_key; then
       [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
       git clone --depth 1 -b $branch --single-branch $MODMIUM_REPO_SSH || fail "${R}Failed to clone repository, exiting...${N}" keepflag
     else

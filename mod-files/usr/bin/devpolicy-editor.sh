@@ -17,22 +17,26 @@ if [[ ! -f $DEVPOL_FILE ]] || [[ ! -d /usr/local/share/policy-test-tool ]]; then
 
   ensure_deps cryptography nano pyyaml protobuf-python
 
-  cp -r /usr/share/.policy-test-tool /usr/local/share/policy-test-tool
+  cp -r /usr/share/.policy-test-tool /usr/local/share/policy-test-tool || fail "${R}Could not copy tool files from /usr/share/.policy-test-tool.${N}"
+
+  # Only mark setup complete once everything above succeeded
   touch $DEVPOL_FILE
 fi
+
 if [[ ! -f "$jsonFile" ]]; then
-  cp -r /usr/share/.policy-test-tool /usr/local/share/policy-test-tool
-  cd /usr/local/share/policy-test-tool || exit 1
+  cp -r /usr/share/.policy-test-tool /usr/local/share/policy-test-tool || fail "${R}Could not restore tool files from /usr/share/.policy-test-tool.${N}"
+  cd /usr/local/share/policy-test-tool || fail "${R}Could not enter tool directory.${N}"
   ldconfig
   echo -e "${B}Dumping device policy to json...${N}"
-  python devpol.py --dump --input $(ls /var/lib/devicesettings/policy.* | sort -V | tail -n 1) --output dump.json
+  python devpol.py --dump --input $(ls /var/lib/devicesettings/policy.* | sort -V | tail -n 1) --output dump.json || fail "${R}Policy dump failed. Check that a policy file exists in /var/lib/devicesettings/.${N}"
   echo -e "${G}Done! Starting editor...${N}"
   sleep 2
   stty -echo
   tput civis
   clear
 fi
-cd /usr/local/share/policy-test-tool
+
+cd /usr/local/share/policy-test-tool || fail "${R}Tool directory missing even after setup. Try deleting $DEVPOL_FILE and re-running.${N}"
 
 # there's gotta be a better way to do this but whatever :sob:
 RESTRICTIONS=(

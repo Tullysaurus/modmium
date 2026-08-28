@@ -103,6 +103,10 @@ dropModFiles() {
   fi
 }
 
+has_ssh_key() {
+  [[ -f /root/.ssh/id_rsa || -f /root/.ssh/id_ed25519 || -f /root/.ssh/id_ecdsa || -f /root/.ssh/id_dsa ]]
+}
+
 updateModmium() {
   clear
   stty echo
@@ -112,7 +116,7 @@ updateModmium() {
   mkdir -p /mnt/stateful_partition/git
   cd /mnt/stateful_partition/git
   [[ -d modmium ]] && rm -rf modmium
-  if [[ -d /root/.ssh ]]; then
+  if has_ssh_key; then
     [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
     git clone --depth 1 -b $branch --single-branch $repoSSH || fail "${R}Failed to clone repository, exiting...${N}"
   else
@@ -218,7 +222,7 @@ installCros() {
   mkdir -p /mnt/stateful_partition/git
   cd /mnt/stateful_partition/git
   [[ -d modmium ]] && rm -rf modmium
-  if [[ -d /root/.ssh ]]; then
+  if has_ssh_key; then
     [[ ! -d /home/chronos/user/.ssh ]] && mkdir /home/chronos/user/.ssh
     git clone --depth 1 -b $branch --single-branch $repoSSH || fail "${R}Failed to clone repository, exiting...${N}"
   else

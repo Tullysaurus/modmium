@@ -3,6 +3,12 @@
 
 source /usr/lib/libmosh.sh
 
+fail(){
+  echo -e "$1"
+  sleep 3
+  exit 1
+}
+
 if ! which git &>/dev/null || ! which file &>/dev/null; then
   ensure_deps git file
 fi
