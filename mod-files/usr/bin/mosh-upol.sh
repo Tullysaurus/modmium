@@ -127,14 +127,19 @@ grabpolicy(){
 }
 
 autopolicy(){
-  echo -e "${Y}This tries to read the target account's policy directly, without needing chrome://policy access. It's newer and less tested than the Downloads method - if it fails, use 'Grab policy.json from Downloads' instead.${N}"
-  echo -ne "${G}Enter target email: ${N}"
-  read -rep "" email
-  [[ -z "$email" ]] && { echo -e "${R}No email entered, exiting...${N}"; sleep 2; menu_reset; full_menu; return; }
+  echo -e "${Y}This reads policy straight from the signed-in session over D-Bus, so no chrome://policy access is needed. Sign in to the target account first.${N}"
+  echo -ne "${G}Account to read (leave blank to use the signed-in one): ${N}"
+  read -rep "" account
   ensure_deps protobuf-python
-  run_with_feedback "Extracting policy for $email..." \
-    python3 /usr/share/.policy-test-tool/extract_user_policy.py --email "$email" --output "$POLICYFILE" \
-    || { echo -e "${R}Automatic extraction failed - use 'Grab policy.json from Downloads' instead.${N}"; sleep 3; menu_reset; full_menu; return; }
+  # decode_policy.py finds the active session itself, and pulls device and
+  # extension policy too - neither of which the Downloads route gets. It
+  # writes to /root/policy.json, which is what $POLICYFILE points at.
+  args=()
+  [[ -n "$account" ]] && args=(--account-id "$account")
+  run_with_feedback "Reading policy from the active session..." \
+    python3 /usr/share/.policy-test-tool/decode_policy.py "${args[@]}" \
+    || { echo -e "${R}Automatic extraction failed - make sure the target account is signed in, or use 'Grab policy.json from Downloads' instead.${N}"; sleep 3; menu_reset; full_menu; return; }
+  [[ -f $POLICYFILE ]] || { echo -e "${R}Extraction reported success but $POLICYFILE is missing.${N}"; sleep 3; menu_reset; full_menu; return; }
   sync
   echo -e "Refreshing menu..."
   sleep 0.5
