@@ -1,3 +1,20 @@
+/*
+ * Build with an explicit baseline, NOT -march=native:
+ *
+ *   gcc -O2 -static -march=x86-64 -mtune=generic -o clearsecbits-x86-64 clearsecbits.c
+ *
+ * A native build on a modern machine produces a binary that requires
+ * x86-64-v3 (AVX2/BMI) and kernel 6.1. Plenty of supported Chromebooks meet
+ * neither: Goldmont Plus (Gemini Lake, e.g. octopus) has no AVX at all, and
+ * ChromeOS ships 4.x/5.x kernels. Such a binary dies with SIGILL, and since
+ * runscript() wraps every menu action in it, that leaves the device with no
+ * working menu items at all - including the root shell and the updater, so
+ * there is no way to fix it from MOSH.
+ *
+ * Verify a build before shipping it:
+ *   readelf -n clearsecbits-x86-64 | grep -E 'ISA needed|ABI:'
+ * Expect "x86 ISA needed: x86-64-baseline" and an ABI of 3.2.0.
+ */
 #define _GNU_SOURCE
 #include <sys/prctl.h>
 #include <sys/syscall.h>
