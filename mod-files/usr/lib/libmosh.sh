@@ -254,12 +254,36 @@ ensure_deps() {
   fi
 }
 
+# clearsecbits (shipped prebuilt) clears securebits so nix works on 141+.
+# It's only usable if it actually runs: a build made for a newer CPU dies with
+# SIGILL on older ones (Goldmont/Gemini Lake have no AVX2), and an update that
+# drops mod-files without the binary leaves it missing entirely. Either way,
+# calling it unconditionally turns every menu action into a silent no-op, so
+# probe it once and fall back to running the command directly.
+clearsecbits_usable() {
+  if [[ -z $_CLEARSECBITS_OK ]]; then
+    if command -v clearsecbits &>/dev/null && clearsecbits true &>/dev/null; then
+      _CLEARSECBITS_OK=0
+    else
+      _CLEARSECBITS_OK=1
+    fi
+  fi
+  return $_CLEARSECBITS_OK
+# The redirect belongs on the function, not the probe: bash prints its own
+# "Illegal instruction" job message when the child dies on a signal, and that
+# comes from the shell running the function, not from the command's stderr.
+} 2>/dev/null
+
 runscript() {
   stty echo
   tput cnorm
   echo "$1"
   log_action "RUN: $1"
-  employ as_system clearsecbits "$1"
+  if clearsecbits_usable; then
+    employ as_system clearsecbits "$1"
+  else
+    employ as_system "$1"
+  fi
   menu_reset
   full_menu
 }
