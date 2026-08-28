@@ -252,3 +252,55 @@ EOF
   done
   [ -z "$offenders" ]
 }
+
+# -- clearsecbits_usable --
+#
+# runscript() wraps commands in clearsecbits so nix works on ChromeOS 141+.
+# The binary ships prebuilt, so on a device it can be either missing (an
+# update dropped mod-files before the copy step existed) or present but
+# unrunnable (a build targeting a newer CPU dies with SIGILL on Goldmont /
+# Gemini Lake, which have no AVX2). Both used to make every menu action a
+# silent no-op, so the probe has to catch each case.
+
+@test "clearsecbits_usable falls back when the binary is missing" {
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  unset _CLEARSECBITS_OK
+  run clearsecbits_usable
+  [ "$status" -ne 0 ]
+}
+
+@test "clearsecbits_usable falls back when the binary dies on a signal (SIGILL)" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\nkill -ILL $$\n' > "$BATS_TEST_TMPDIR/bin/clearsecbits"
+  chmod 755 "$BATS_TEST_TMPDIR/bin/clearsecbits"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  unset _CLEARSECBITS_OK
+  run clearsecbits_usable
+  [ "$status" -ne 0 ]
+  # bash reports a signal death itself, so the probe must not leak that
+  # message onto the menu.
+  [ -z "$output" ]
+}
+
+@test "clearsecbits_usable uses the binary when it actually runs" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\nexec "$@"\n' > "$BATS_TEST_TMPDIR/bin/clearsecbits"
+  chmod 755 "$BATS_TEST_TMPDIR/bin/clearsecbits"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  unset _CLEARSECBITS_OK
+  run clearsecbits_usable
+  [ "$status" -eq 0 ]
+}
+
+@test "clearsecbits_usable caches its probe instead of re-running per action" {
+  mkdir -p "$BATS_TEST_TMPDIR/bin"
+  printf '#!/bin/sh\nexec "$@"\n' > "$BATS_TEST_TMPDIR/bin/clearsecbits"
+  chmod 755 "$BATS_TEST_TMPDIR/bin/clearsecbits"
+  PATH="$BATS_TEST_TMPDIR/bin:$PATH"
+  unset _CLEARSECBITS_OK
+  clearsecbits_usable
+  [ "$_CLEARSECBITS_OK" -eq 0 ]
+  rm -f "$BATS_TEST_TMPDIR/bin/clearsecbits"
+  clearsecbits_usable   # cached, so still succeeds despite the binary vanishing
+}
